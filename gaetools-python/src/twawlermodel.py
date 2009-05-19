@@ -82,8 +82,33 @@ class TwawlRule(db.Model):
     """
     
     ruleName = db.StringProperty(required = True)
-    lastSearch = db.DateProperty(required = False)
+    lastSearch = db.DateTimeProperty(required = False)
     highTweetId = db.IntegerProperty(required = True, default = 0)
+    totalTweets = db.IntegerProperty(required = True, default = 0)
+    
+    def update(self, highTweet, tweetsIncrement):
+        """
+        This method is used to update the details of the twawl rule and then clear the cache
+        """
+    
+        # update the last search and high tweet id of the rule
+        self.lastSearch = datetime.datetime.utcnow()
+        self.highTweetId = highTweet 
+        
+        # update the total tweets of the rule
+        if (self.totalTweets is None):
+            self.totalTweets = tweetsIncrement
+        else:
+            self.totalTweets = self.totalTweets + tweetsIncrement
+            
+        # save the rule to the database
+        self.put()
+        
+        # add an info log entry about the number of tweets processed
+        logging.info("successfully processed %s tweets, high tweet id now %s", tweetsIncrement, highTweet)
+        
+        # clear the cache key for the update
+        memcache.delete(cachehelper.createCacheKey("twawlrule", self.ruleName))
     
     def findOrCreate(searchName):
         # convert the rulename to lower case
@@ -111,7 +136,7 @@ class TwawlRule(db.Model):
             logging.error("Unable to write the twawl rule %s to the cache", searchName)
             
         return fnresult
-
+    
     findOrCreate = staticmethod(findOrCreate)
     
     

@@ -7,6 +7,7 @@
 # Section: Version History
 # 16/05/2009 (DJO) - Created File
 
+import datetime
 import yaml
 import logging
 import exceptions
@@ -99,7 +100,7 @@ class TwitterAuth:
     with twitter.
     """
     
-    def __init__(self, twitUser, oauthToken = None):
+    def __init__(self, twitUser, urlToken = None):
         """
         Initialise an instance of the TwitterAuth class that will enable us to create an oauth access
         token with twitter
@@ -115,7 +116,7 @@ class TwitterAuth:
         self.consumer = oauth.OAuthConsumer(self.config.consumerKey, self.config.consumerSecret)
         
         # if the oauth token is not set, then prepare the request token and authorization steps
-        if oauthToken is None:           
+        if urlToken is None:           
             # create the request token
             self.requestToken = self._initRequestToken(URL_REQUEST_TOKEN)
             
@@ -124,7 +125,7 @@ class TwitterAuth:
         # otherwise, create an oauth token from the string passed to the function
         else:
             # look for the twitter user from the database
-            user = TwawlUser.findByRequestKey(oauthToken)
+            user = TwawlUser.findByRequestKey(urlToken)
             
             # if we found the user
             if user is not None:
@@ -225,9 +226,9 @@ class TwitterAuth:
             
         logging.debug("received access token: %s", fnresult)
 
-        return fnresult
+        return fnresult.to_string()
     
-    def getAccessToken(userId, allowInit = True, oauthToken = None, config = DEFAULT_CONFIG, allowCached = True):
+    def getAccessToken(userId, allowInit = True, urlToken = None, config = DEFAULT_CONFIG, allowCached = True):
         """
         This static method is used to wrap the operations of authenticating with twitter.  In addition
         to prevent requerying twitter many times for the authentication token, this is stored in the 
@@ -237,10 +238,12 @@ class TwitterAuth:
         # initialise variables
         fnresult = None
         
+        logging.debug("Application requested Twitter Access Token for user: %s, allowInit = %s, url auth token = %s", userId, allowInit, urlToken)
+        
         # if the oauth token is set, then we should regenerate the authentication token
-        if oauthToken is not None:
+        if urlToken is not None:
             # create the authenticator
-            authenticator = TwitterAuth(userId, oauthToken)
+            authenticator = TwitterAuth(userId, urlToken)
             
             # build the access token
             fnresult = authenticator.buildAccessToken(URL_ACCESS_TOKEN)
@@ -286,8 +289,44 @@ class Tweet():
         """
         
         # initialise members
-        self.from_id = 0
-        self.to_id = 0
+        self.id = 0
+        self.created_at = datetime.datetime.utcnow()
+        self.from_user = 0
+        self.from_user_id = 0
+        self.to_user_id = 0
+        self.text = ''
+        self.profile_image_url = ''
+        self.source = ''
+        self.iso_language_code = 'en'
+        
+        # if the source dictionary is defined, then copy the details across
+        if srcDict is not None:
+            self.loadFromDict(srcDict)
+            
+    def __str__(self):
+        """
+        Return a string representation of the tweet
+        """
+        
+        return self.from_user + ": " + self.text
+            
+    def loadFromDict(self, srcDict):
+        """
+        This method is used to initialise the elements of the tweet from the json decoded format stored in a dict
+        
+        @srcDict the input dict object that contains the parameters for the tweet
+        """
+        
+        # TODO: implement a more elegant way of doing this - I hate typing repetitive stuff...
+        self.id = srcDict.get('id', 0)
+        self.created_at = srcDict.get('created_at', self.created_at)
+        self.from_user = srcDict.get('from_user', self.from_user)
+        self.from_user_id = srcDict.get('from_user_id', self.from_user_id)
+        self.to_user_id = srcDict.get('to_user_id', self.to_user_id)
+        self.text = srcDict.get('text', self.text)
+        self.profile_image_url = srcDict.get('profile_image_url', self.profile_image_url)
+        self.source = srcDict.get('source', self.source)
+        self.iso_language_code = srcDict.get('iso_language_code', self.iso_language_code)
         
 class TwitterRequest():
     """
@@ -304,6 +343,8 @@ class TwitterRequest():
         self.userId = user
         self.authRequired = True
         self.baseUrl = "http://twitter.com/"
+        self.allowInit = False
+        self.urlAuthToken = None
         
         # load the configuration information
         self.config = TwitterConfig()
@@ -319,6 +360,8 @@ class TwitterRequest():
         
         # initialise variables
         payload = {}
+        token = None
+        oauth_request = None
         
         # prepare the url
         url = self.prepareRequest(payload)
@@ -329,8 +372,9 @@ class TwitterRequest():
             consumer = oauth.OAuthConsumer(self.config.consumerKey, self.config.consumerSecret)
             
             # find the access key for the specified user
-            accessToken = TwitterAuth.getAccessToken(self.userId)
+            accessToken = TwitterAuth.getAccessToken(self.userId, self.allowInit, self.urlAuthToken)
             if accessToken is not None:
+                logging.debug("attempting to parse access token: %s", accessToken)
                 token = oauth.OAuthToken.from_string(accessToken)
             
             # create the oauth request
@@ -340,18 +384,21 @@ class TwitterRequest():
             else:
                 logging.error("Request required authentication, however, no suitable access token available.")
         
-        # make the request
-        logging.debug("Attempting to perform twitter search: %s", url)
-        
-        # alright make the request
-        request_result = urlfetch.fetch(url = url, headers = oauth_request.to_header())
-        if (request_result.status_code == 200):
-            logging.debug("Got successful response from search, going to parse results")
+        if (oauth_request is not None):
+            # make the request
+            logging.debug("Attempting to perform twitter search: %s", url)
             
-            # use simple json to decode the response
-            self.processResponse(request_result.content, responseCallback)
-        else:
-            logging.warning("TWITTER SEARCH FAILED - RESPONSE: %s", request_status.content)
+            # alright make the request
+            request_result = urlfetch.fetch(url = url, headers = oauth_request.to_header())
+            if (request_result.status_code == 200):
+                logging.debug("Got successful response from search, going to parse results")
+                
+                # use simple json to decode the response
+                self.processResponse(request_result.content, responseCallback)
+            else:
+                logging.warning("TWITTER SEARCH FAILED - RESPONSE: %s", request_status.content)
+        else:   
+            logging.warning("TWITTER SEARCH NOT DONE, NO OAUTH INITIALIZATION PERMITTED")
             
 class TwitterSearchRequest(TwitterRequest):
     """
@@ -401,7 +448,6 @@ class TwitterSearchRequest(TwitterRequest):
             for singleResult in searchResults['results']:
                 # create the new tweet instance
                 tweetResult = Tweet(singleResult)
-                logging.debug("found a tweet %s", tweetResult)
         
                 # if the response callback is defined, then give it some information
                 if responseCallback is not None:
