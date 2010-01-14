@@ -3,3 +3,7 @@
 
 # ignore compiled python files
 *.pyc
+
+# ignore project files
+.project
+.pydevproject
