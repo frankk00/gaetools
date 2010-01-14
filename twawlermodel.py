@@ -4,40 +4,28 @@
 # Section: Version History
 # 14/05/2009 (DJO) - Initial Version Created
 
+# import standard libraries
 import datetime
 import logging
-import cachehelper
 
+# import appengine libraries
 from google.appengine.ext import db
 from google.appengine.api import memcache
 
-class TwawlUser(db.Model):
+# import 3rd party libs
+from BeautifulSoup import BeautifulSoup
+
+# import other gaetools libs
+import cachehelper
+
+class TwawlAuthRequest(db.Model):
     """
     This class is used to define the oauth access tokens for the users that may make use of the application
     """
     
-    userId = db.StringProperty(required = True)
     requestKey = db.StringProperty(required = False)
     requestKeyEncoded = db.StringProperty(required = False)
     accessKeyEncoded = db.StringProperty(required = False)
-    
-    def findAccessKeyForUser(user):
-        """
-        This static method is used to look for a particular user, and if found then return the access
-        key they have stored in the database
-        """
-        
-        # initialise variable
-        fnresult = None
-        
-        # look for the user
-        user = TwawlUser.findOrCreate(user, False)
-        
-        # if we found the user, update the result
-        if user is not None:
-            fnresult = user.accessKeyEncoded
-            
-        return fnresult
     
     def findByRequestKey(key):
         """
@@ -45,33 +33,26 @@ class TwawlUser(db.Model):
         """
         
         # initialise the query
-        query = TwawlUser.gql("WHERE requestKey = :key", key=key)
+        query = TwawlAuthRequest.gql("WHERE requestKey = :key", key=key)
         
         # return the query result
         return query.get()
         
-    def findOrCreate(user, allowCreate = True):
+    def findOrCreate(key, allowCreate = True):
         """
         This static method is used to find or create the required user that will be used to 
         store the oauth request and access keys
         """
         
         # convert the user id to lower case
-        user = user.lower()
-        
-        # look for the specified user in the database
-        query = TwawlUser.gql("WHERE userId = :user", user=user)
-        
-        # look for the result
-        fnresult = query.get()
+        fnresult = TwawlAuthRequest.findByRequestKey(key)
         
         # if we couldn't find the user then create him
         if allowCreate and (fnresult == None):
-            fnresult = TwawlUser(userId = user)
+            fnresult = TwawlAuthRequest(requestKey = key)
             
         return fnresult
     
-    findAccessKeyForUser = staticmethod(findAccessKeyForUser)
     findByRequestKey = staticmethod(findByRequestKey)
     findOrCreate = staticmethod(findOrCreate)
     
@@ -210,3 +191,88 @@ class TwawlHistory(db.Model):
     # define the static methods
     find = staticmethod(find)
     findOrCreateToday = staticmethod(findOrCreateToday)
+    
+class TweetSource(db.Model):
+    """
+    The twitter source class is used to define the source from which the tweet eminated
+    """
+    
+    title = db.StringProperty(required = True)
+    url = db.StringProperty(required = False)
+    description = db.StringProperty(required = False)
+    firstSeen = db.DateTimeProperty(required = True, default = datetime.datetime.utcnow())
+    
+    def findOrCreate(sourceString):
+        """
+        This static method is used to find the requested source type, and if not found then create
+        it it the database
+        """
+        
+        # convert the source string using BeautifulSoup
+        soupedSource = BeautifulSoup(sourceString)
+        
+        logging.debug("Looking for source: %s", soupedSource)
+        
+        # firstly have a look in the cache
+        # fnresult = memcache.get(cachehelper.createCacheKey("tweetsrc", title))
+        
+        return None
+    
+    findOrCreate = staticmethod(findOrCreate)
+
+class TwitterUser(db.Model):
+    """
+    This model object is used to represent a user in twitter
+    """
+    
+    userId = db.IntegerProperty(required = True)
+    userName = db.StringProperty(required = False)
+    profileImageUrl = db.StringProperty(required = False)
+    
+    def findOrCreate(id, name = None, imageUrl = None):
+        """
+        This static method is used to locate the user id, or create the new user as specified in the parameters.
+        At this stage no caching is used in this method, but it could be updated to do so.  I just worry that the
+        number of different users I expect to come across in twawling could mean that there is little value 
+        in caching these details. 
+        """
+        
+        # if the id is 0, then return None
+        if (id is None) or (id == 0): 
+            return None
+        
+        # initialise the query
+        query = TwitterUser.gql("WHERE userId = :id", id=id)
+        
+        # return the first user found (should only be one)
+        fnresult = query.get()
+        
+        # if we didn't find the user, then create a new TwitterUser record and save it to the database
+        if fnresult is None:
+            fnresult = TwitterUser(userId = id, userName = name, profileImageUrl = imageUrl)
+            fnresult.put()
+        # otherwise, if the username on the entry we found is empty, then we should update with the name if not empty
+        elif (fnresult.userName is None) and (name is not None):
+            fnresult.userName = name
+            fnresult.profileImageUrl = imageUrl
+            fnresult.put()
+            
+            
+        return fnresult
+        
+    findOrCreate = staticmethod(findOrCreate)    
+    
+class Tweet(db.Model):
+    """
+    The Tweet class encapsulates details about a tweet from twitter.  At this stage the data stored in the model
+    is related to the results of a search, but this will be extended as the gaetools library grows.
+    """
+    
+    tweet_id = db.IntegerProperty(required = True)
+    created_at = db.DateTimeProperty(required = True)
+    from_user = db.ReferenceProperty(TwitterUser, required = True, collection_name = "TweetSrcUser_set")
+    from_user_name = db.StringProperty(required = True)
+    profile_image_url = db.StringProperty(required = False)
+    to_user = db.ReferenceProperty(TwitterUser, required = False, collection_name = "TweetDestUser_set")
+    text = db.StringProperty(required = True, multiline = True)
+    iso_language_code = db.StringProperty(required = False)

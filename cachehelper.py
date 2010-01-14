@@ -10,9 +10,10 @@ def createCacheKey(keyPrefix, *keyNames):
     I have a gut feeling there is probably a much better way to do this, probably something like a string
     join method or something
     """
-    fnresult= keyPrefix
+    fnresult = keyPrefix
     
     for keyName in keyNames:
-        fnresult += "_" + keyName
+        if keyName is not None:
+            fnresult += "_" + keyName
         
     return fnresult
