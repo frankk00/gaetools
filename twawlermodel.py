@@ -12,9 +12,6 @@ import logging
 from google.appengine.ext import db
 from google.appengine.api import memcache
 
-# import 3rd party libs
-from BeautifulSoup import BeautifulSoup
-
 # import other gaetools libs
 import cachehelper
 

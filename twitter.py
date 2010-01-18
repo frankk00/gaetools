@@ -6,6 +6,7 @@
 #
 # Section: Version History
 # 16/05/2009 (DJO) - Created File
+# 15/01/2010 (DJO) - Modifications to the library to allow looser coupling
 
 import datetime
 import yaml
@@ -56,8 +57,14 @@ class TwitterConfig:
         self.consumerKey = None
         self.consumerSecret = None
         
+        # initialise the request urls
+        self.requestTokenUrl = URL_REQUEST_TOKEN
+        self.accessTokenUrl = URL_ACCESS_TOKEN
+        self.authorizeUrl = URL_AUTHORIZE
+        
         # load the configuration from the specified configuration
-        self.load(config)
+        if config: 
+            self.load(config)
     
     def load(self, config = DEFAULT_CONFIG):
         """
@@ -109,14 +116,14 @@ class TwitterAuth:
     with twitter.
     """
     
-    def __init__(self, urlToken = None):
+    def __init__(self, twitter_config, urlToken = None):
         """
         Initialise an instance of the TwitterAuth class that will enable us to create an oauth access
         token with twitter
         """
         
         # initialise the configuration
-        self.config = TwitterConfig()
+        self.config = twitter_config
         self.requestToken = urlToken
         self.accessToken = None
         
@@ -224,7 +231,7 @@ class TwitterAuth:
         if fnresult:
             return fnresult.to_string()
     
-    def getAccessToken(allowInit = True, urlToken = None, config = DEFAULT_CONFIG):
+    def getAccessToken(twitter_config, allowInit = True, urlToken = None):
         """
         This static method is used to wrap the operations of authenticating with twitter.  In addition
         to prevent requerying twitter many times for the authentication token, this is stored in the 
@@ -239,7 +246,7 @@ class TwitterAuth:
         # if the oauth token is set, then we should regenerate the authentication token
         if urlToken is not None:
             # create the authenticator
-            authenticator = TwitterAuth(urlToken)
+            authenticator = TwitterAuth(twitter_config, urlToken)
             
             # build the access token
             fnresult = authenticator.buildAccessToken(URL_ACCESS_TOKEN)
@@ -256,9 +263,9 @@ class TwitterAuth:
             return fnresult
         
         # seeing as we haven't used the cache, let's get stuck into this (If we are permitted)       
-        if allowInit:           
+        if allowInit:
             # TODO: make this work for more than just a default service user
-            authenticator = TwitterAuth()           
+            authenticator = TwitterAuth(twitter_config)
         else:
             logging.error("Unable to contact twitter, access token unknown")
         
@@ -345,7 +352,7 @@ class TwitterRequest():
     authentication as required.
     """
     
-    def __init__(self, allow_init = False, url_auth_token = None):
+    def __init__(self, allow_init = False, url_auth_token = None, twitter_config = None):
         """
         Initialise the twitter request
         """
@@ -359,7 +366,7 @@ class TwitterRequest():
         self.successful = False
         
         # load the configuration information
-        self.config = TwitterConfig()
+        self.config = TwitterConfig() if (twitter_config is None) else twitter_config
         
     def execute(self, responseCallback = None):
         """
@@ -384,7 +391,7 @@ class TwitterRequest():
             consumer = oauth.OAuthConsumer(self.config.consumerKey, self.config.consumerSecret)
             
             # find the access key for the specified user
-            self.accessToken = TwitterAuth.getAccessToken(self.allowInit, self.urlAuthToken)
+            self.accessToken = TwitterAuth.getAccessToken(self.config, self.allowInit, self.urlAuthToken)
             if self.accessToken is not None:
                 logging.debug("attempting to parse access token: %s", self.accessToken)
                 token = oauth.OAuthToken.from_string(self.accessToken)
@@ -422,13 +429,13 @@ class TwitterSearchRequest(TwitterRequest):
     certain request criteria
     """
     
-    def __init__(self, allow_init = False, url_auth_token = None):
+    def __init__(self, allow_init = False, url_auth_token = None, twitter_config = None):
         """
         Initialise the search request
         """
         
         # call the inherited constructor
-        TwitterRequest.__init__(self, allow_init, url_auth_token)
+        TwitterRequest.__init__(self, allow_init, url_auth_token, twitter_config)
         
         # update the base url to the correct location
         self.nextPage = None
@@ -499,13 +506,13 @@ class TwitterLoginRequest(TwitterRequest):
     user.
     """
     
-    def __init__(self, allow_init = False, url_auth_token = None):
+    def __init__(self, allow_init = False, url_auth_token = None, twitter_config = None):
         """
         Initialise the twitter login request object
         """
         
         # call the inherited constructor
-        TwitterRequest.__init__(self, allow_init, url_auth_token)
+        TwitterRequest.__init__(self, allow_init, url_auth_token, twitter_config)
                 
         # initialise members
         self.twitterId = 0
