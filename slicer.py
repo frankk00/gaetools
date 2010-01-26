@@ -47,7 +47,7 @@ class SlicedTask:
         
         return self.startTime + self.sliceTime - datetime.datetime.utcnow() 
     
-    def run(self, requestHandler, sliceAction):
+    def run(self, request, sliceAction):
         """
         This method is used to run the task, the method keeps a check on the time the task started and makes
         sure the task is completed with the maximum slice time - which ideally should be a couple of seconds
@@ -56,13 +56,13 @@ class SlicedTask:
         @requestHandler the web request that we are currently running in
         @sliceAction a callback function that we can use to execute an action in the context of the slice
         """
-                                                        
+        
         # get the current time
         self.startTime = datetime.datetime.utcnow()
         
         try:
             # prepare the task to run
-            self.setup(requestHandler)
+            self.setup(request)
             
             # while we are still under the required time, continue to execute
             while (not self.taskComplete) and (self.startTime + self.sliceTime > datetime.datetime.utcnow()):
@@ -86,7 +86,7 @@ class SlicedTask:
         # return true to tell the outer method that we had nothing to do
         return True
     
-    def setup(self, requestHandler):
+    def setup(self, request):
         """
         This method is used to prepare the task for running, in this section we will prepare any objects
         that could be used in the runTask method but don't want to spend the cost of creating those objects within
@@ -98,7 +98,7 @@ class SlicedTask:
         logging.debug("task setup initiated")
         
         # check the request
-        self.checkRequest(requestHandler.request)
+        self.checkRequest(request)
         
         
     

@@ -16,6 +16,7 @@ from google.appengine.ext import db
 import twitter
 import slicer
 import twawlermodel
+from oauthmodel import OAuthAccessKey
 
 # define the minimum amount of time required to process some tweets
 MIN_TWEET_PROCESSING_INTERVAL = datetime.timedelta(seconds = 5)
@@ -30,7 +31,7 @@ class TwawlTask(slicer.SlicedTask):
     that match the #conceptbuzz label
     """
     
-    def __init__(self, maxInterval = slicer.DEFAULT_MAX_INTERVAL):
+    def __init__(self, run_as_user, twitter_config = None, maxInterval = slicer.DEFAULT_MAX_INTERVAL):
         """
         Initialise the new TwawlTask object
         """
@@ -39,33 +40,30 @@ class TwawlTask(slicer.SlicedTask):
         slicer.SlicedTask.__init__(self, maxInterval)
         
         # initialise private members
-        self._allowInit = False
-        self._oauth_token = None
+        self._runAsUser = run_as_user
+        self._accessKey = None
+        self._twitterConfig = twitter_config
         
         # initialise members
-        self.userId = ''
         self.ruleName = ''
         self.highTweetId = 0
-        self.twawlFor = 'A String that we are very unlikely to find...'
+        self.searchFor = 'A String that we are very unlikely to find...'
         self.nextRequest = None
         self.processedCount = 0
         self.currentHistory = None
+        self.searchType = "search"
         
         # initialise function callbacks
         self.tweetInspectors = []
         
-    def checkRequest(self, request):
-        """
-        This method is used to check the request for parameters that will affect the way we behave
-        """
-        
-        # call inherited functionality
-        slicer.SlicedTask.checkRequest(self, request)
-        
-        # initialise some members from the request
-        self._allowInit = request.get('init', self._allowInit)
-        self._oauth_token = request.get('oauth_token', self._oauth_token)
-        
+        # if the run user has been specified, then find the access key for the user
+        if run_as_user:
+            accesskey_data = OAuthAccessKey.findByUserName(run_as_user)
+            
+            # if we have found some data, then update the access key
+            if accesskey_data:
+                self._accessKey = accesskey_data.accessKeyEncoded
+                
     def inspectTweet(self, tweet):
         """
         This method is used to iterate through all of the tweet inspectors that have expressed an interest
@@ -118,6 +116,11 @@ class TwawlTask(slicer.SlicedTask):
             logging.warning("No twawl rule name is set, unable to twawl for tweets")
             fnresult = True
             
+        # if we don't have an access key we can't do anything
+        if (self._accessKey is None):
+            logging.warning("No access key set, suspect we have don't have a validation access key for %s", self._runAsUser)
+            fnresult = True
+            
         # reset the processed count
         self.processedCount = 0 
                
@@ -127,28 +130,27 @@ class TwawlTask(slicer.SlicedTask):
             rule = twawlermodel.TwawlRule.findOrCreate(self.ruleName)
             
             # create the twitter search request
-            request = twitter.TwitterSearchRequest(self.userId)
-            request.allowInit = self._allowInit
-            request.urlAuthToken = self._oauth_token
-            request.highTweetId = rule.highTweetId
-            request.nextPage = self.nextRequest
-            request.searchQuery = self.twawlFor
-            request.language = "en"
+            search_request = twitter.newRequest(self.searchType, twitter_config = self._twitterConfig)
+            search_request.accessToken = self._accessKey
+            search_request.highTweetId = rule.highTweetId
+            search_request.nextPage = self.nextRequest
+            search_request.searchQuery = self.searchFor
+            search_request.language = "en"
             
-            logging.debug("High tweet id is %s", request.highTweetId)
+            logging.debug("High tweet id is %s", search_request.highTweetId)
             
             # make the request
-            request.execute(self.processTweet)
+            search_request.execute(self.processTweet)
             
             # if the request was not successful, return that we have finished immediately
-            if not request.successful:
+            if not search_request.successful:
                 return True
             
             # save the next page results, for if we get another shot
-            self.nextRequest = request.nextPage
+            self.nextRequest = search_request.nextPage
             
             # update the function result, based on the success of our search
-            foundTweets = (request.nextPage is not None) or (self.highTweetId > request.highTweetId)
+            foundTweets = (search_request.nextPage is not None) or (self.highTweetId > search_request.highTweetId)
             fnresult = not foundTweets
             
             # if the request resulted in us finding some tweets, then update the history
@@ -170,8 +172,3 @@ class TwawlTask(slicer.SlicedTask):
                 rule.update(self.highTweetId, self.processedCount)
             
         return fnresult
-    
-    def setCredentials(self, user, passwd):
-        # initialise the username and password
-        self.username = user
-        self.password = passwd

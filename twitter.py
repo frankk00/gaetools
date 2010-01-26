@@ -26,6 +26,7 @@ import cachehelper
 
 # TODO: remove the dependency on the TwawlUser library - twitter library needs to be stand-alone
 import twawlermodel
+from oauthmodel import OAuthAccessKey
 
 # initialise some constants
 # TODO: probably move these to configuration parameters, as they may change in the future
@@ -33,10 +34,16 @@ URL_REQUEST_TOKEN = 'http://twitter.com/oauth/request_token'
 URL_ACCESS_TOKEN = 'http://twitter.com/oauth/access_token'
 URL_AUTHORIZE = 'http://twitter.com/oauth/authorize'
 
-ACTION_SEARCH = 'search.json'
+URL_SEARCH = 'http://search.twitter.com/search.json'
+URL_STATUSES_HOME_TIMELINE = 'http://api.twitter.com/1/statuses/home_timeline.json'
+URL_STATUSES_MENTIONS = 'http://twitter.com/statuses/mentions.json'
 ACTION_ACCOUNT_VERIFY = 'account/verify_credentials.json'
+ACTION_GETMENTIONS = 'statuses/mentions.json'
 PARAM_NEXTPAGE = 'next_page'
-DATETIME_FORMAT_TWITTER = "%a, %d %b %Y %H:%M:%S +0000"
+
+# TODO: investigate date time format differences
+DATETIME_FORMAT_TWITTERSEARCH = "%a, %d %b %Y %H:%M:%S +0000"
+DATETIME_FORMAT_TWITTER = "%a %b %d %H:%M:%S +0000 %Y" # this used to work for the search method
 
 # initialise some default values
 DEFAULT_CONFIG = "twitter"
@@ -140,7 +147,7 @@ class TwitterAuth:
         # otherwise, create an oauth token from the string passed to the function
         else:
             # look for the twitter user from the database
-            requestKey = twawlermodel.TwawlAuthRequest.findByRequestKey(self.requestToken)
+            requestKey = OAuthAccessKey.findByRequestKey(self.requestToken)
             
             # if we found the user
             if requestKey is not None:
@@ -179,7 +186,7 @@ class TwitterAuth:
             fnresult = oauth.OAuthToken.from_string(request_result.content)
             
             # look for the twawl user in the database
-            request = twawlermodel.TwawlAuthRequest.findOrCreate(fnresult.key)
+            request = OAuthAccessKey.findOrCreate(fnresult.key, partnerId = 'twitter')
             
             # update the user request key details
             request.requestKeyEncoded = fnresult.to_string()
@@ -218,7 +225,7 @@ class TwitterAuth:
             fnresult = oauth.OAuthToken.from_string(request_result.content)
             
             # update the user to store the access token
-            request = twawlermodel.TwawlAuthRequest.findOrCreate(self.requestToken)
+            request = OAuthAccessKey.findOrCreate(self.requestToken, partnerId = 'twitter')
             
             # update the user accesskey 
             request.accessKeyEncoded = fnresult.to_string()
@@ -231,6 +238,7 @@ class TwitterAuth:
         if fnresult:
             return fnresult.to_string()
     
+    @staticmethod
     def getAccessToken(twitter_config, allowInit = True, urlToken = None):
         """
         This static method is used to wrap the operations of authenticating with twitter.  In addition
@@ -255,14 +263,14 @@ class TwitterAuth:
         
         # if the access key is still not known, then see if we can obtain it from the database
         if fnresult is None:
-            fnresult = twawlermodel.TwawlAuthRequest.findByRequestKey(urlToken)
+            fnresult = OAuthAccessKey.findByRequestKey(urlToken)
             
         # if we have a value, then return that value
         if fnresult is not None:
             logging.debug("oauth key for request key '%s' retrieved from the cache or db", urlToken)
             return fnresult
         
-        # seeing as we haven't used the cache, let's get stuck into this (If we are permitted)       
+        # seeing as we haven't used the cache, let's get stuck into this (If we are permitted)
         if allowInit:
             # TODO: make this work for more than just a default service user
             authenticator = TwitterAuth(twitter_config)
@@ -272,14 +280,12 @@ class TwitterAuth:
         # return the access token
         return fnresult
     
-    getAccessToken = staticmethod(getAccessToken)
-    
 class Tweet():
     """
     This class is used to represent a tweet from twitter.
     """
     
-    def __init__(self, srcDict = None):
+    def __init__(self, srcDict = None, date_time_format = DATETIME_FORMAT_TWITTER):
         """
         Default constructor for the tweet class
         """
@@ -294,6 +300,7 @@ class Tweet():
         self.profile_image_url = ''
         self.source = ''
         self.iso_language_code = 'en'
+        self.dateTimeFormat = date_time_format
         
         # initialise some flags 
         self.worthSaving = True
@@ -318,7 +325,7 @@ class Tweet():
         
         # TODO: implement a more elegant way of doing this - I hate typing repetitive stuff...
         self.id = srcDict.get('id', 0)
-        self.created_at = datetime.datetime.strptime(srcDict.get('created_at', self.created_at.strftime(DATETIME_FORMAT_TWITTER)), DATETIME_FORMAT_TWITTER)
+        self.created_at = datetime.datetime.strptime(srcDict.get('created_at', self.created_at.strftime(self.dateTimeFormat)), self.dateTimeFormat)
         self.from_user = srcDict.get('from_user', self.from_user)
         self.from_user_id = srcDict.get('from_user_id', self.from_user_id)
         self.to_user_id = srcDict.get('to_user_id', self.to_user_id)
@@ -390,15 +397,27 @@ class TwitterRequest():
             # create an oauth consumer
             consumer = oauth.OAuthConsumer(self.config.consumerKey, self.config.consumerSecret)
             
-            # find the access key for the specified user
-            self.accessToken = TwitterAuth.getAccessToken(self.config, self.allowInit, self.urlAuthToken)
+            # find the access key for the specified user (if we haven't got it already)
+            if self.accessToken is None:
+                self.accessToken = TwitterAuth.getAccessToken(self.config, self.allowInit, self.urlAuthToken)
+
+            # if we have an accessToken, the extract the token
             if self.accessToken is not None:
                 logging.debug("attempting to parse access token: %s", self.accessToken)
                 token = oauth.OAuthToken.from_string(self.accessToken)
             
             # create the oauth request
             if token is not None:
-                oauth_request = oauth.OAuthRequest.from_consumer_and_token(consumer, token = token, http_url = nextAction)
+                # TODO: find a better python way to do this
+                try:
+                    (request_url, request_querystr) = nextAction.split('?')
+                except:
+                    request_url = nextAction
+                    request_querystr = ''
+                
+                
+                logging.debug("creating token for url: %s query_string: %s", request_url, request_querystr)
+                oauth_request = oauth.OAuthRequest.from_consumer_and_token(consumer, token = token, http_url = request_url, parameters = oauth.OAuthRequest._split_url_string(request_querystr))
                 oauth_request.sign_request(oauth.OAuthSignatureMethod_HMAC_SHA1(), consumer, token)
             else:
                 logging.error("Request required authentication, however, no suitable access token available.")
@@ -419,14 +438,15 @@ class TwitterRequest():
                 # use simple json to decode the response
                 self.processResponse(request_result.content, responseCallback)
             else:
-                logging.warning("TWITTER SEARCH FAILED - STATUS CODE = %s", request_result.status_code)
+                logging.warning("TWITTER SEARCH FAILED (%s): %s", request_result.status_code, request_result.content)
         else:   
             logging.warning("TWITTER SEARCH NOT DONE, NO OAUTH INITIALIZATION PERMITTED")
             
-class TwitterSearchRequest(TwitterRequest):
+            
+class TwitterGetStatusesRequest(TwitterRequest):
     """
-    The TwitterSearchRequest class is used to wrap the search operation and return tweets that match a 
-    certain request criteria
+    The PaginatedTwitterRequest class is used to encapsulate the behaviour of twitter requests
+    where multiple pages of results maybe returned
     """
     
     def __init__(self, allow_init = False, url_auth_token = None, twitter_config = None):
@@ -439,13 +459,15 @@ class TwitterSearchRequest(TwitterRequest):
         
         # update the base url to the correct location
         self.nextPage = None
-        self.baseUrl = "http://search.twitter.com/"
         self.language = None
         
         # initialise members
         self.highTweetId = 0
-        self.searchQuery = ""
         self.tweets = []
+        
+    def getActionAndParams(self):
+
+        return (URL_STATUSES_HOME_TIMELINE, {})
         
     def prepareRequest(self, postParams):
         """
@@ -454,51 +476,119 @@ class TwitterSearchRequest(TwitterRequest):
         can be pushed into the postParams argument.
         """
         
-        # initialise variables
-        fnresult = self.baseUrl + ACTION_SEARCH
+        # get the action and the extra parameters
+        (fnresult, extra_params) = self.getActionAndParams()
         
         # if the next page is set, then use that url
         if self.nextPage is not None:
             fnresult += self.nextPage
         # otherwise, build a suitable url
         else:
-            fnresult += "?rpp=50&q=" + oauth.escape(self.searchQuery) + "&since_id=" + str(self.highTweetId)
+            fnresult += "?rpp=50"
+            
+            if self.highTweetId > 0:
+                fnresult += "&since_id=%s" % (self.highTweetId)
             
             # if the language code has been set, then specify the language code also
             if self.language is not None:
                 fnresult += "&lang=" + self.language
+                
+            # TODO: one day use the map, filter or reduce function once I become enlightened in functional programming
+            for k,v in extra_params.iteritems():
+                fnresult += "&%s=%s" % (k, oauth.escape(v))
             
         return fnresult
     
+class TwitterMentionsRequest(TwitterGetStatusesRequest):
+    """
+    The TwitterMentionsRequest class is used to find all mentions for the current user
+    """
+    
+    def getActionAndParams(self):
+        return (URL_STATUSES_MENTIONS, {})
+        
     def processResponse(self, content, responseCallback):
         """
         This method is used to process the response from twitter in the case that our request has been successful
+
+        @content - the content of the response returned from the request
+        @responseCallback - a method callback that can be used to push details back to the calling method
+        """
+        # decode the json response
+        searchResults = simplejson.loads(content)
+        for singleResult in searchResults:
+            # create the new tweet instance
+            tweetResult = Tweet()
+            
+            # TODO: investigate implementing a generic mapping behaviour
+            tweetResult.id = singleResult.get('id', 0)
+            tweetResult.created_at = datetime.datetime.strptime(singleResult.get('created_at', tweetResult.created_at.strftime(DATETIME_FORMAT_TWITTER)), DATETIME_FORMAT_TWITTER)
+            tweetResult.from_user = singleResult['user']['name']
+            tweetResult.from_user_id = singleResult['user']['id']
+            tweetResult.to_user_id = singleResult.get('in_reply_to_user_id', tweetResult.to_user_id)
+            tweetResult.text = singleResult.get('text', tweetResult.text)
+            tweetResult.profile_image_url = singleResult['user']['profile_image_url']
+            tweetResult.source = singleResult.get('source', tweetResult.source)
+            tweetResult.iso_language_code = singleResult.get('iso_language_code', tweetResult.iso_language_code)            
+
+            # if the response callback is defined, then give it some information
+            if responseCallback is not None:
+                responseCallback(tweetResult)
+
+            # add the tweet to the array
+            self.tweets.append(tweetResult)
+            
+class TwitterSearchRequest(TwitterGetStatusesRequest):
+    """
+    The TwitterSearchRequest class is used to wrap the search operation and return tweets that match a 
+    certain request criteria
+    """
+
+    def __init__(self, allow_init = False, url_auth_token = None, twitter_config = None):
+        """
+        Initialise the search request
+        """
         
+        # call the inherited constructor
+        TwitterGetStatusesRequest.__init__(self, allow_init, url_auth_token, twitter_config)
+        
+        # initialise members
+        self.searchQuery = ""
+        
+    def getActionAndParams(self):
+
+        return (URL_SEARCH, { 'q': self.searchQuery })
+        
+    def processResponse(self, content, responseCallback):
+        """
+        This method is used to process the response from twitter in the case that our request has been successful
+
         @content - the content of the response returned from the request
         @responseCallback - a method callback that can be used to push details back to the calling method
         """
         # decode the json response
         searchResults = simplejson.loads(content)
         logging.debug("TwitterSearchRequest processing the response")
-        
+
         # check to see if we have a next page to process
         self.nextPage = None
         if (PARAM_NEXTPAGE in searchResults):
             logging.info("Another page of results found, will continue search")
             self.nextPage = searchResults[PARAM_NEXTPAGE]
-        
+
         # iterate through the results
         if 'results' in searchResults:
             for singleResult in searchResults['results']:
                 # create the new tweet instance
                 tweetResult = Tweet(singleResult)
-        
+
                 # if the response callback is defined, then give it some information
                 if responseCallback is not None:
                     responseCallback(tweetResult)
-                    
+
                 # add the tweet to the array
                 self.tweets.append(tweetResult)
+
                 
 class TwitterLoginRequest(TwitterRequest):
     """
@@ -539,9 +629,17 @@ class TwitterLoginRequest(TwitterRequest):
         @content - the content of the response returned from the request
         @responseCallback - a method callback that can be used to push details back to the calling method
         """
+        
         # decode the json response
         searchResults = simplejson.loads(content)
       
+        # if we have have a url auth token, then update the oauth details
+        if self.urlAuthToken:
+            auth_data = OAuthAccessKey.findByRequestKey(self.urlAuthToken)
+            auth_data.userId = searchResults.get('id')
+            auth_data.userName = searchResults.get('screen_name')
+            auth_data.put()
+            
         # read the unique numeric id of the user from twitter
         self.twitterId = searchResults.get('id', self.twitterId)
         
@@ -570,3 +668,24 @@ class TwitterLoginRequest(TwitterRequest):
         self.utcOffset = searchResults.get('utc_offset', self.utcOffset)
         
         logging.info("Successfully logged in %s (%d: %s from %s)", self.screenName, self.twitterId, self.realName, self.location)            
+        
+
+## INITIALISE THE REQUEST CREATION FUNCTION
+
+REQUEST_TYPES = {
+    "search": TwitterSearchRequest,
+    "statuses/home_timeline": TwitterGetStatusesRequest,
+    "statuses/mentions": TwitterMentionsRequest,
+    "statuses": {
+        "mentions": TwitterMentionsRequest,
+    }
+}
+
+DEFAULT_REQUEST_TYPE = "search"
+        
+def newRequest(request_type, allow_init = False, url_auth_token = None, twitter_config = None):
+    request_class = REQUEST_TYPES.get(request_type, REQUEST_TYPES[DEFAULT_REQUEST_TYPE])
+    logging.debug("twitter request type of %s requested, using class: %s", request_type, request_class)
+
+        
+    return request_class(allow_init = allow_init, url_auth_token = url_auth_token, twitter_config = twitter_config)

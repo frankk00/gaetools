@@ -15,44 +15,6 @@ from google.appengine.api import memcache
 # import other gaetools libs
 import cachehelper
 
-class TwawlAuthRequest(db.Model):
-    """
-    This class is used to define the oauth access tokens for the users that may make use of the application
-    """
-    
-    requestKey = db.StringProperty(required = False)
-    requestKeyEncoded = db.StringProperty(required = False)
-    accessKeyEncoded = db.StringProperty(required = False)
-    
-    def findByRequestKey(key):
-        """
-        This static method is used to find a user by the request key
-        """
-        
-        # initialise the query
-        query = TwawlAuthRequest.gql("WHERE requestKey = :key", key=key)
-        
-        # return the query result
-        return query.get()
-        
-    def findOrCreate(key, allowCreate = True):
-        """
-        This static method is used to find or create the required user that will be used to 
-        store the oauth request and access keys
-        """
-        
-        # convert the user id to lower case
-        fnresult = TwawlAuthRequest.findByRequestKey(key)
-        
-        # if we couldn't find the user then create him
-        if allowCreate and (fnresult == None):
-            fnresult = TwawlAuthRequest(requestKey = key)
-            
-        return fnresult
-    
-    findByRequestKey = staticmethod(findByRequestKey)
-    findOrCreate = staticmethod(findOrCreate)
-    
 class TwawlRule(db.Model):
     """
     This class is used to define the model that encapsulates a particular rule of tweets that we are looking
@@ -206,7 +168,7 @@ class TweetSource(db.Model):
         """
         
         # convert the source string using BeautifulSoup
-        soupedSource = BeautifulSoup(sourceString)
+        # soupedSource = BeautifulSoup(sourceString)
         
         logging.debug("Looking for source: %s", soupedSource)
         
